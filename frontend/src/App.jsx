@@ -1,36 +1,59 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Dropzone } from './components/Dropzone';
 import { ProcessingView } from './components/ProcessingView';
 import { SuccessCard } from './components/SuccessCard';
 import { Github, Twitter } from 'lucide-react';
+import { uploadVideo, checkStatus, getDownloadUrl } from './services/api';
 
 function App() {
   const [status, setStatus] = useState('idle'); // idle, uploading, processing, success
   const [progress, setProgress] = useState(0);
+  const [message, setMessage] = useState('');
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const pollingRef = useRef(null);
 
-  const handleSimulate = () => {
-    setStatus('uploading');
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    }
+  }, []);
 
-    // Simulate Upload (2s)
-    setTimeout(() => {
+  const handleRealUpload = async (file) => {
+    try {
+      setStatus('uploading');
+      const { task_id } = await uploadVideo(file[0]); // Dropzone returns array
+
       setStatus('processing');
-      simulateProcessing();
-    }, 2000);
+      startPolling(task_id);
+    } catch (error) {
+      console.error("Upload failed:", error);
+      alert("上传失败，请重试");
+      setStatus('idle');
+    }
   };
 
-  const simulateProcessing = () => {
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
+  const startPolling = (taskId) => {
+    pollingRef.current = setInterval(async () => {
+      try {
+        const data = await checkStatus(taskId);
+
+        // Update UI
+        setProgress(data.progress || 0);
+        if (data.message) setMessage(data.message);
+
+        // Check completion
+        if (data.progress === 100 || data.result_url) {
+          clearInterval(pollingRef.current);
+          if (data.result_url) {
+            setDownloadUrl(getDownloadUrl(data.result_url));
+          }
           setStatus('success');
-          return 100;
         }
-        return prev + 2; // ~50 steps * 100ms = 5s
-      });
-    }, 100);
+      } catch (error) {
+        console.error("Status check failed:", error);
+      }
+    }, 1000);
   };
 
   const handleReset = () => {
@@ -93,7 +116,7 @@ function App() {
                 exit={{ opacity: 0, scale: 0.9, position: 'absolute' }}
                 className="w-full"
               >
-                <Dropzone onDrop={handleSimulate} />
+                <Dropzone onDrop={handleRealUpload} />
               </motion.div>
             )}
 
@@ -118,7 +141,7 @@ function App() {
                 exit={{ opacity: 0, scale: 0.95 }}
                 className="w-full"
               >
-                <ProcessingView progress={progress} />
+                <ProcessingView progress={progress} message={message} />
               </motion.div>
             )}
 
@@ -129,7 +152,7 @@ function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 className="w-full"
               >
-                <SuccessCard onReset={handleReset} />
+                <SuccessCard onReset={handleReset} downloadUrl={downloadUrl} />
               </motion.div>
             )}
           </AnimatePresence>

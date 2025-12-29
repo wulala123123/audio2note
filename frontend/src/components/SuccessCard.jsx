@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { FileDown, Video, CheckCircle2, ArrowRight } from 'lucide-react';
 import { clsx } from 'clsx';
 
-export const SuccessCard = ({ onReset }) => {
+export const SuccessCard = ({ onReset, downloadUrl, videoUrl }) => {
     return (
         <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -26,10 +26,10 @@ export const SuccessCard = ({ onReset }) => {
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 justify-center relative z-10">
-                    <button className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-100 text-slate-950 font-medium rounded-xl hover:bg-white transition-all hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/10">
+                    <a href={downloadUrl} download className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-100 text-slate-950 font-medium rounded-xl hover:bg-white transition-all hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/10">
                         <FileDown className="w-5 h-5 group-hover:text-indigo-600 transition-colors" />
                         <span>下载 PPTX</span>
-                    </button>
+                    </a>
 
                     <button className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-800 text-slate-200 font-medium rounded-xl hover:bg-slate-700 transition-all hover:scale-105 active:scale-95 border border-slate-700">
                         <Video className="w-5 h-5 group-hover:text-emerald-400 transition-colors" />

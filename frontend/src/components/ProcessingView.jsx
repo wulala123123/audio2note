@@ -11,7 +11,7 @@ const LOG_MESSAGES = [
     "打包资源中...",
 ];
 
-export const ProcessingView = ({ progress }) => {
+export const ProcessingView = ({ progress, message }) => {
     const [logIndex, setLogIndex] = useState(0);
 
     useEffect(() => {
@@ -44,13 +44,13 @@ export const ProcessingView = ({ progress }) => {
                     <div className="h-6 overflow-hidden relative">
                         <AnimatePresence mode="wait">
                             <motion.p
-                                key={logIndex}
+                                key={message || logIndex}
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
                                 className="text-slate-500 text-sm font-light"
                             >
-                                {LOG_MESSAGES[logIndex]}
+                                {message || LOG_MESSAGES[logIndex]}
                             </motion.p>
                         </AnimatePresence>
                     </div>

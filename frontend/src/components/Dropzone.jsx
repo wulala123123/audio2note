@@ -4,14 +4,48 @@ import { UploadCloud, FileVideo } from 'lucide-react';
 import { clsx } from 'clsx';
 
 export const Dropzone = ({ onDrop, folderName = "video_slides" }) => {
+    const inputRef = React.useRef(null);
+
+    const handleClick = () => {
+        inputRef.current?.click();
+    };
+
+    const handleFileChange = (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+            onDrop(e.target.files);
+        }
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            onDrop(e.dataTransfer.files);
+        }
+    };
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="w-full max-w-xl mx-auto"
         >
+            <input
+                type="file"
+                ref={inputRef}
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                accept="video/*"
+            />
             <div
-                onClick={onDrop}
+                onClick={handleClick}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
                 className={clsx(
                     "relative group cursor-pointer",
                     "rounded-3xl border-2 border-dashed border-slate-700 bg-slate-900/50",
