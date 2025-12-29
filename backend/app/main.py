@@ -1,0 +1,22 @@
+# filename: backend/app/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.v1.endpoints import router as api_router
+
+app = FastAPI(title="Video-to-PPT API", version="1.0.0")
+
+# CORS 配置：允许 React 前端调试
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产环境建议修改为具体的 frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(api_router, prefix="/api/v1")
+
+@app.get("/")
+async def root():
+    return {"message": "Video-to-PPT Backend Service is Running"}

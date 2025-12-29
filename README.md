@@ -1,78 +1,113 @@
-# 视频PPT自动提取工具
+# Video-to-PPT 智能转换工具 (FastAPI 后端重构版)
 
-这是一个高效的Python工具，旨在全自动地从视频（如在线课程、会议录像）中检测、裁剪并提取演示文稿（PPT），最终生成一个完整的 `.pptx` 文件。
+本项目是一个基于 Python 和 computer vision 技术的后端服务，能够自动处理教学视频或会议录像。它通过 OpenCV 智能识别并裁剪 PPT 区域，利用 SSIM 算法提取关键帧，最终自动生成 `.pptx` 演示文稿。
 
-## 主要功能
+主要功能：
+- **智能裁剪**: 自动识别视频中的 PPT 投影区域并进行裁剪。
+- **关键帧提取**: 基于图像相似度 (SSIM) 去重，只保留内容变更的幻灯片。
+- **RESTful API**: 提供标准的 HTTP 接口，易于集成 React 等前端。
+- **Windows 优化**: 针对 Windows 文件系统进行特别优化，解决文件占用与路径问题。
 
--   **自动定位和裁剪**：智能识别视频帧中的PPT区域，并自动将视频裁剪为仅包含PPT内容的新视频。
--   **智能变化检测**：通过结构相似性指数（SSIM）算法，精确地检测幻灯片的翻页变化，避免提取重复或过渡的帧。
--   **一键式批量处理**：只需将所有源视频放入 `input` 文件夹，运行主程序即可一次性处理所有视频。
--   **断点续传**：程序会自动跳过已经处理过的视频，方便在中断后继续执行任务。
--   **结构化输出**：所有生成的文件（裁剪后的视频、中间图片、最终的PPTX文件）都会被清晰地组织在 `output` 文件夹中。
+---
 
-## 项目结构
+## 🏗️ 项目目录结构详解
 
+本项目采用 **Clean Architecture** (整洁架构) 分层设计，确保代码的可维护性与扩展性。
+
+```text
+video2note_test/
+├── backend/                        # 后端工程根目录
+│   ├── app/                        # 核心应用代码
+│   │   ├── api/                    # 接口层 (Controller)
+│   │   │   └── v1/
+│   │   │       └── endpoints.py    # 定义 API 路由 (如 /process-video)
+│   │   ├── core/                   # 核心配置
+│   │   │   └── config.py           # 路径常量、环境配置管理
+│   │   ├── services/               # 业务逻辑层 (Service)
+│   │   │   ├── video_service.py    # 核心算法封装 (裁剪 + 提取逻辑)
+│   │   │   └── files_service.py    # 文件安全操作 (解决 Windows 锁定问题)
+│   │   ├── utils/                  # 通用工具函数
+│   │   └── main.py                 # FastAPI 应用入口 (CORS, 中间件)
+│   ├── temp/                       # [自动生成] 大文件上传临时存储区
+│   ├── output/                     # [自动生成] 处理结果产出区
+│   │   └── {uuid}/                 # 按任务 ID 隔离的输出文件夹
+│   │       ├── cropped_video/      # 裁剪后的中间视频
+│   │       ├── debug_images/       # 算法处理过程中的调试图 (定位框等)
+│   │       ├── ppt_images/         # 提取出的 PPT 关键帧图片
+│   │       └── ppt_output/         # 最终生成的 .pptx 文件
+│   └── requirements.txt            # Python 依赖清单
+├── input/                          # (旧版保留) 原始视频输入目录
+└── README.md                       # 项目说明文档
 ```
-.
-├── input/                  # <--- 在这里放入你的源视频文件
-├── output/
-│   ├── image/              # 存储PPT定位过程中的调试图片
-│   ├── video/              # 存储裁剪后的视频
-│   ├── ppt_images/         # 存储从视频中提取出的单页PPT图片
-│   └── pptx_files/         # <--- 最终生成的 .pptx 文件在这里
-├── crop_ppt.py             # 步骤1：负责裁剪视频的脚本
-├── extract_ppt.py          # 步骤2：负责提取PPT的脚本
-├── main.py                 # <--- 运行这个文件来启动所有流程
-└── requirements.txt        # 项目所需的Python库
+
+---
+
+## 🚀 快速开始 (Windows)
+
+### 1. 环境准备
+确保已安装 Python 3.10+。
+
+```powershell
+# 1. 进入 backend 目录
+cd backend
+
+# 2. (可选) 创建并激活虚拟环境
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 3. 安装依赖
+pip install -r backend/requirements.txt
 ```
 
-## 安装指南
+### 2. 启动服务
+使用 `uvicorn` 启动开发服务器（支持热重载）：
 
-1.  **克隆或下载项目**
-    将本项目文件下载到您的本地计算机。
-
-2.  **创建并激活虚拟环境 (推荐)**
-    在项目根目录下打开终端，并执行以下命令：
-    ```bash
-    # 创建虚拟环境
-    python -m venv .venv
-    # 激活虚拟环境 (Windows)
-    .\.venv\Scripts\activate
-    # 激活虚拟环境 (macOS/Linux)
-    # source .venv/bin/activate
-    ```
-
-3.  **安装依赖库**
-    在激活虚拟环境的终端中，运行以下命令来安装所有必需的Python库：
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## 使用方法
-
-1.  **放入视频**：将一个或多个视频文件（如 `.mp4`, `.mov`, `.mkv` 等）复制到 `input` 文件夹中。
-
-2.  **运行程序**：在项目根目录的终端中，执行主程序：
-    ```bash
-    python main.py
-    ```
-
-3.  **获取结果**：程序会自动执行 **视频裁剪** 和 **PPT提取** 两个步骤。处理完成后，您可以在 `output/pptx_files/` 文件夹中找到与源视频同名的 `.pptx` 文件。
-
-## 参数调优 (可选)
-
-如果提取效果不理想（例如，漏掉了某些页面或提取了过多相似页面），您可以打开 `extract_ppt.py` 文件，在 `main` 函数的底部找到 `extract_key_frames_persistent_reference` 函数的调用部分，并调整以下核心参数：
-
--   `ssim_threshold`：页面变化的敏感度。值越低，越容易将微小变化识别为新页面。
--   `frame_interval`：每隔多少帧进行一次检查。减小此值可以提高精度，但会增加处理时间。
--   `stability_frames`：确认一个新页面前需要保持稳定的帧数。增加此值可以避免提取过渡动画中的帧。
-
-```python
-# 位于 extract_ppt.py 的底部
-extract_key_frames_persistent_reference(
-    video_path=video_file_path,
-    ssim_threshold=0.95,      # 调整此值 (0.0 ~ 1.0)
-    frame_interval=20,        # 调整此值 (正整数)
-    stability_frames=3        # 调整此值 (正整数)
-)
+```powershell
+# 务必在 backend 目录下执行
+uvicorn app.main:app --reload
 ```
+
+启动成功后，控制台将显示类似如下信息：
+```text
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
+## 📚 API 接口文档
+
+服务启动后，访问 Swagger UI 进行交互式测试：
+
+👉 **打开浏览器访问**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+### 主要接口
+
+#### `POST /api/v1/process-video`
+上传视频文件并触发处理流程。
+
+- **请求**: `multipart/form-data`, 字段名 `file` (上传视频文件)
+- **响应**: JSON
+  ```json
+  {
+    "status": "success",
+    "data": {
+      "guid": "a1b2c3d4-...",
+      "cropped_video": "C:/.../output/.../cropped.mp4",
+      "ppt_file": "C:/.../output/.../presentation.pptx"
+    },
+    "message": "视频处理完成"
+  }
+  ```
+
+---
+
+## 🛠️ 技术栈
+
+- **Web 框架**: FastAPI (高性能异步框架)
+- **服务器**: Uvicorn (ASGI 服务器)
+- **视觉算法**: OpenCV (cv2), scikit-image (SSIM 相似度计算)
+- **PPT 生成**: python-pptx
+- **并发模型**: AsyncIO + ThreadPool (处理 CPU 密集型任务)
+
+## ⚠️ 注意事项
+
+1. **Windows 文件锁**: 代码中已包含 `secure_delete` 机制，但在处理大文件时，Windows 可能会短暂锁定文件，属正常现象。
+2. **性能**: 视频处理是 CPU 密集型操作，处理 1 小时的视频可能需要数分钟，请耐心等待接口响应。
