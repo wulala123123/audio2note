@@ -14,8 +14,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.staticfiles import StaticFiles
+from app.core.config import OUTPUT_DIR
+
 # 注册路由
 app.include_router(api_router, prefix="/api/v1")
+
+# 挂载静态文件 (用于下载 PPT)
+app.mount("/static", StaticFiles(directory=OUTPUT_DIR), name="static")
 
 @app.get("/")
 async def root():

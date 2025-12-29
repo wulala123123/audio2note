@@ -1,34 +1,38 @@
+# ==========================
+# 1. Python & 环境依赖
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
 .env
 .venv/
-.vscode/
 venv/
 env/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.db/
-.files/
-*.mp4
-*.avi
-*.mkv
-*.mov
-*.m4s
-*.flv
-*.jpg
-*_test.*
+# Windows 缩略图缓存
+Thumbs.db
+ehthumbs.db
 
-input/*
-!input/.gitkeep
-
-output/*
-!output/.gitkeep
-
-# Logs
-*.log
-storage/logs/
-
+# ==========================
+# 2. IDE & 编辑器配置
+# ==========================
 .vscode/
+.idea/
+*.swp
 
-docker-compose.yml
-Dockerfile
+# ==========================
+# 3. 后端运行时生成文件 (关键修改)
+# ==========================
+# 忽略 backend/temp 下的所有临时视频，但保留文件夹本身
+backend/temp/*
+!backend/temp/.gitkeep
+
+# 忽略 backend/output 下的所有生成结果 (PPT, 截图等)，但保留文件夹本身
+backend/output/*
+!backend/output/.gitkeep
+
+# ==========================
+# 4. 日志文件
+# ==========================
+*.log
+backend/logs/
+
