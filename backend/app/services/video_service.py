@@ -10,6 +10,10 @@ from pptx.util import Inches
 # config
 from app.core.config import OUTPUT_DIR
 
+import logging
+from app.core.config import OUTPUT_DIR
+from app.core.task_manager import update_task_progress
+
 logger = logging.getLogger(__name__)
 
 class VideoService:
@@ -138,7 +142,9 @@ class VideoService:
             cropped = frame[y:y+h, x:x+w]
             writer.write(cropped)
             frame_cursor += 1
-            if frame_cursor % 500 == 0:
+            if frame_cursor % 50 == 0:
+                progress = int((frame_cursor / total_frames) * 50)
+                update_task_progress(self.output_guid, progress, f"正在裁剪视频: {progress}%")
                 logger.info(f"已裁剪 {frame_cursor}/{total_frames} 帧")
 
         cap.release()
@@ -156,6 +162,7 @@ class VideoService:
         if not cap.isOpened():
             return None
 
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         ppt_path = self.ppt_output_dir / f"{self.output_guid}.pptx"
         prs = Presentation()
         prs.slide_width = Inches(16)
@@ -179,6 +186,12 @@ class VideoService:
             current_frame_idx += 1
 
             # 跳帧检测
+            if current_frame_idx % 20 == 0 and total_frames > 0:
+                progress = 50 + int((current_frame_idx / total_frames) * 50)
+                # Cap progress at 99% until fully done
+                progress = min(99, progress)
+                update_task_progress(self.output_guid, progress, f"正在生成PPT: {progress}%")
+
             if current_frame_idx > 0 and current_frame_idx % frame_interval != 0:
                 continue
 
