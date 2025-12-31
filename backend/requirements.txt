@@ -1,25 +1,25 @@
 # Core Framework
-fastapi
-uvicorn
-python-multipart
-aiofiles
-python-dotenv
+fastapi==0.128.0
+uvicorn==0.40.0
+python-multipart==0.0.21
+aiofiles==25.1.0
+python-dotenv==1.2.1
 
 # Video/Image Processing
-opencv-python
-python-pptx
-tqdm
+opencv-python==4.11.0.86
+python-pptx==1.0.2
+tqdm==4.67.1
 
 # PyTorch GPU (CUDA 12.4)
-torch
-torchaudio
+torch==2.6.0+cu124
+torchaudio==2.6.0+cu124
 
 # PaddleOCR GPU
-paddlepaddle-gpu
-paddleocr
+paddlepaddle-gpu==2.6.1.post120
+paddleocr==2.9.1
 
 # Speech-to-Text
-google-genai
-moviepy
-funasr
-modelscope
+google-genai==1.56.0
+moviepy==2.2.1
+funasr==1.2.9
+modelscope==1.33.0

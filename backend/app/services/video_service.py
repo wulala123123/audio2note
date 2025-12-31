@@ -66,46 +66,71 @@ class VideoService:
             similarity_threshold=0.90  # 90% 文本相似度阈值
         )
 
-    def process(self, input_video_path: Path, enable_transcription: bool = False) -> dict:
+    def process(
+        self, 
+        input_video_path: Path, 
+        enable_ppt_extraction: bool = True,
+        enable_audio_transcription: bool = False
+    ) -> dict:
         """
-        全流程处理：裁剪 -> 提取PPT -> [可选] 提取字幕
+        全流程处理：[可选] PPT 提取 + [可选] 音频转录
+        
+        两个功能模块完全独立，可自由组合。
         
         Args:
             input_video_path: 原始视频路径
-            enable_transcription: 是否启用语音转文字
+            enable_ppt_extraction: 是否启用 PPT 提取
+            enable_audio_transcription: 是否启用音频转录
             
         Returns:
             dict: 处理结果，包含各输出文件路径
         """
         input_video_path = Path(input_video_path)
-        logger.info(f"开始处理视频流程, GUID: {self.output_guid}, 字幕: {enable_transcription}")
+        logger.info(f"开始处理视频, GUID: {self.output_guid}, "
+                   f"PPT提取: {enable_ppt_extraction}, 音频转录: {enable_audio_transcription}")
         
-        # 1. 定位 PPT 区域 (使用边缘检测)
-        update_task_progress(self.output_guid, 5, "正在定位 PPT 区域...")
-        bbox = self._locate_ppt_region(input_video_path)
-        
-        if not bbox:
-            raise ValueError("无法定位 PPT 区域，请确保视频中包含清晰的 PPT 画面")
-        
-        # 2. FFmpeg 硬件加速裁剪
-        update_task_progress(self.output_guid, 10, "正在裁剪视频 (GPU 加速)...")
-        cropped_video_path = self._crop_video_ffmpeg(input_video_path, bbox)
-        
-        if not cropped_video_path:
-            raise ValueError("视频裁剪失败")
-        
-        # 3. 三层漏斗提取 PPT
-        # 关键设计: 用裁剪视频分析，从原始视频截图
-        ppt_path = self._extract_ppt_gpu_pipeline(
-            cropped_video=cropped_video_path,
-            original_video=input_video_path,
-            crop_bbox=bbox
-        )
-        
-        # 4. [可选] 语音转文字
+        ppt_path = None
         transcript_path = None
-        if enable_transcription:
-            update_task_progress(self.output_guid, 95, "正在提取字幕 (可能需要较长时间)...")
+        
+        # ========== 模块 1: PPT 提取 (条件执行) ==========
+        if enable_ppt_extraction:
+            # 进度区间: 0% - 85% (若同时启用音频) 或 0% - 100% (仅 PPT)
+            ppt_progress_end = 85 if enable_audio_transcription else 100
+            
+            # 1.1 定位 PPT 区域
+            update_task_progress(self.output_guid, 5, "正在定位 PPT 区域...")
+            bbox = self._locate_ppt_region(input_video_path)
+            
+            if not bbox:
+                raise ValueError("无法定位 PPT 区域，请确保视频中包含清晰的 PPT 画面")
+            
+            # 1.2 FFmpeg 硬件加速裁剪
+            update_task_progress(self.output_guid, 10, "正在裁剪视频 (GPU 加速)...")
+            cropped_video_path = self._crop_video_ffmpeg(input_video_path, bbox)
+            
+            if not cropped_video_path:
+                raise ValueError("视频裁剪失败")
+            
+            # 1.3 三层漏斗提取 PPT
+            ppt_path = self._extract_ppt_gpu_pipeline(
+                cropped_video=cropped_video_path,
+                original_video=input_video_path,
+                crop_bbox=bbox
+            )
+            
+            logger.info(f"PPT 提取完成: {ppt_path}")
+        
+        # ========== 模块 2: 音频转录 (条件执行，完全独立) ==========
+        if enable_audio_transcription:
+            # 进度区间: 85% - 100% (若同时启用 PPT) 或 0% - 100% (仅音频)
+            audio_progress_start = 85 if enable_ppt_extraction else 0
+            
+            update_task_progress(
+                self.output_guid, 
+                audio_progress_start + 5, 
+                "正在进行语音识别 (FunASR)..."
+            )
+            
             try:
                 transcript_text = get_audio_transcriber().transcribe_video(input_video_path)
                 
@@ -122,7 +147,7 @@ class VideoService:
         # 返回结果
         return {
             "guid": self.output_guid,
-            "cropped_video": str(cropped_video_path),
+            "cropped_video": str(self.cropped_dir / f"{self.output_guid}_cropped.mp4") if enable_ppt_extraction else None,
             "ppt_file": str(ppt_path) if ppt_path else None,
             "transcript_file": str(transcript_path) if transcript_path else None
         }
@@ -218,6 +243,19 @@ class VideoService:
             Path: 裁剪后视频路径，失败返回 None
         """
         x, y, w, h = bbox
+        
+        # 修正: NVENC 要求输入宽高必须为偶数 (且最好 2 对齐)
+        # 否则会报 Access Violation 0xC0000005
+        # 策略: 向下取偶，确保不出界
+        x = x if x % 2 == 0 else x - 1
+        y = y if y % 2 == 0 else y - 1
+        w = w if w % 2 == 0 else w - 1
+        h = h if h % 2 == 0 else h - 1
+        
+        # 安全检查: 防止宽度高度变为 0
+        w = max(2, w)
+        h = max(2, h)
+        
         output_path = self.cropped_dir / f"{self.output_guid}_cropped.mp4"
         
         # FFmpeg 命令构造
@@ -227,12 +265,15 @@ class VideoService:
         # - libx264 是最稳定可靠的软件编码器，跨环境表现一致
         # - 对于 30 分钟 720p 视频，CPU 编码约需 1-2 分钟，完全可接受
         # - 如需恢复 GPU 加速，可将 libx264 改为 h264_nvenc，-crf 改为 -cq
+        # 
+        # UPDATE 2025-12-31: 修复了 bbox 奇数导致的 crash，恢复尝试 h264_nvenc
         cmd = [
             "ffmpeg",
             "-y",  # 覆盖输出文件
             "-i", str(input_path),
             "-vf", f"crop={w}:{h}:{x}:{y}",
             "-c:v", "h264_nvenc",
+            "-pix_fmt", "yuv420p", # 显式指定像素格式，防止格式协商错误
             "-preset", "p1",  # NVENC 最快预设 (p1=fastest, p7=slowest)
             "-cq", "23",  # 质量控制 (18-28 常用)
             "-c:a", "copy",  # 音频直接复制

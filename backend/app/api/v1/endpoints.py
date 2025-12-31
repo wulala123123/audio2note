@@ -12,38 +12,51 @@ from app.core.task_manager import init_task, update_task_progress, get_task_stat
 
 router = APIRouter()
 
-async def run_video_task(task_id: str, temp_file_path: Path, enable_transcription: bool):
-    """后台任务逻辑"""
+async def run_video_task(
+    task_id: str, 
+    temp_file_path: Path, 
+    enable_ppt_extraction: bool,
+    enable_audio_transcription: bool
+):
+    """
+    后台任务逻辑
+    
+    Args:
+        task_id: 任务唯一标识
+        temp_file_path: 临时视频文件路径
+        enable_ppt_extraction: 是否启用 PPT 提取
+        enable_audio_transcription: 是否启用音频转录
+    """
     try:
         update_task_progress(task_id, 0, "等待处理资源...")
         
         service = VideoService(output_guid=task_id)
         
-        # 在线程池中运行 OpenCV (CPU密集)
-        # 注意: run_in_threadpool 默认只接受位置参数，如果需要关键字参数可能需要用 functools.partial 或 lambda
-        # 这里 VideoService.process 定义为 process(self, input_video_path, enable_transcription=False)
-        # 简单起见，我们可以包装一下或者直接传参如果 run_in_threadpool 支持 (FastAPI context: generally supports *args, **kwargs)
-        # Verify: run_in_threadpool(func, *args, **kwargs) -> Yes.
-        result = await run_in_threadpool(service.process, temp_file_path, enable_transcription=enable_transcription)
+        # 调用解耦后的 process 方法，传递两个独立开关
+        result = await run_in_threadpool(
+            service.process, 
+            temp_file_path, 
+            enable_ppt_extraction=enable_ppt_extraction,
+            enable_audio_transcription=enable_audio_transcription
+        )
         
-        # 结果处理
-        if result and result.get("ppt_file"):
-            # 构造下载链接: /static/{task_id}/ppt_output/{task_id}.pptx
+        # 结果处理: 任一功能成功产出即为成功
+        ppt_url = None
+        transcript_url = None
+        
+        if result.get("ppt_file"):
             ppt_filename = Path(result["ppt_file"]).name
-            # 注意: 这里假设 backend/output 挂载为 /static
-            # 实际文件路径: backend/output/{task_id}/ppt_output/xxx.pptx
-            download_url = f"/static/{task_id}/ppt_output/{ppt_filename}"
-            
-            # 处理字幕链接
-            transcript_url = None
-            if result.get("transcript_file"):
-                transcript_filename = Path(result["transcript_file"]).name
-                # /static/{task_id}/transcripts/{task_id}.txt
-                transcript_url = f"/static/{task_id}/transcripts/{transcript_filename}"
-            
-            complete_task(task_id, download_url, transcript_url=transcript_url)
+            ppt_url = f"/static/{task_id}/ppt_output/{ppt_filename}"
+        
+        if result.get("transcript_file"):
+            transcript_filename = Path(result["transcript_file"]).name
+            transcript_url = f"/static/{task_id}/transcripts/{transcript_filename}"
+        
+        # 只要有一个输出就算成功
+        if ppt_url or transcript_url:
+            complete_task(task_id, ppt_url, transcript_url=transcript_url)
         else:
-            fail_task(task_id, "PPT 生成结果为空")
+            fail_task(task_id, "未能生成任何输出结果")
             
     except Exception as e:
         fail_task(task_id, str(e))
@@ -54,13 +67,24 @@ async def run_video_task(task_id: str, temp_file_path: Path, enable_transcriptio
 async def upload_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    enable_transcription: bool = Form(False)
+    enable_ppt_extraction: bool = Form(True),
+    enable_audio_transcription: bool = Form(False)
 ):
     """
-    1. 上传视频
-    2. 创建后台任务
-    3. 返回 task_id
+    上传视频并创建处理任务
+    
+    Args:
+        file: 视频文件
+        enable_ppt_extraction: 是否启用 PPT 提取 (默认启用)
+        enable_audio_transcription: 是否启用音频转录 (默认禁用)
+    
+    Returns:
+        task_id 和任务状态
     """
+    # 参数校验: 至少选择一项功能
+    if not enable_ppt_extraction and not enable_audio_transcription:
+        raise HTTPException(status_code=400, detail="至少选择一项处理功能")
+    
     task_id = str(uuid.uuid4())
     init_task(task_id)
 
@@ -73,8 +97,14 @@ async def upload_video(
         fail_task(task_id, f"文件保存失败: {str(e)}")
         raise HTTPException(status_code=500, detail="文件上传失败")
 
-    # 加入后台队列
-    background_tasks.add_task(run_video_task, task_id, temp_file_path, enable_transcription)
+    # 加入后台队列，传递两个独立开关
+    background_tasks.add_task(
+        run_video_task, 
+        task_id, 
+        temp_file_path, 
+        enable_ppt_extraction,
+        enable_audio_transcription
+    )
     
     return {
         "task_id": task_id,
