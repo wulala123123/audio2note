@@ -35,7 +35,7 @@ def update_task_progress(task_id: str, progress: int, message: str = None, statu
     if status:
         tasks[task_id]["status"] = status
 
-def complete_task(task_id: str, result_url: str):
+def complete_task(task_id: str, result_url: str, transcript_url: str = None):
     if task_id not in tasks:
         return
     
@@ -43,6 +43,8 @@ def complete_task(task_id: str, result_url: str):
     tasks[task_id]["progress"] = 100
     tasks[task_id]["message"] = "任务完成"
     tasks[task_id]["result_url"] = result_url
+    if transcript_url:
+        tasks[task_id]["transcript_url"] = transcript_url
 
 def fail_task(task_id: str, error_msg: str):
     if task_id not in tasks:

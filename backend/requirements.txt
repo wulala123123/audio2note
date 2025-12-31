@@ -1,8 +1,25 @@
+# Core Framework
 fastapi
 uvicorn
 python-multipart
+aiofiles
+python-dotenv
+
+# Video/Image Processing
 opencv-python
-scikit-image
 python-pptx
 tqdm
-aiofiles
+
+# PyTorch GPU (CUDA 12.4)
+torch
+torchaudio
+
+# PaddleOCR GPU
+paddlepaddle-gpu
+paddleocr
+
+# Speech-to-Text
+google-genai
+moviepy
+funasr
+modelscope

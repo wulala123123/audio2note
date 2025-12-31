@@ -2,7 +2,7 @@
 import uuid
 import shutil
 from pathlib import Path
-from fastapi import APIRouter, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import APIRouter, File, UploadFile, HTTPException, BackgroundTasks, Form
 from fastapi.concurrency import run_in_threadpool
 
 from app.services.video_service import VideoService
@@ -12,7 +12,7 @@ from app.core.task_manager import init_task, update_task_progress, get_task_stat
 
 router = APIRouter()
 
-async def run_video_task(task_id: str, temp_file_path: Path):
+async def run_video_task(task_id: str, temp_file_path: Path, enable_transcription: bool):
     """后台任务逻辑"""
     try:
         update_task_progress(task_id, 0, "等待处理资源...")
@@ -20,7 +20,11 @@ async def run_video_task(task_id: str, temp_file_path: Path):
         service = VideoService(output_guid=task_id)
         
         # 在线程池中运行 OpenCV (CPU密集)
-        result = await run_in_threadpool(service.process, temp_file_path)
+        # 注意: run_in_threadpool 默认只接受位置参数，如果需要关键字参数可能需要用 functools.partial 或 lambda
+        # 这里 VideoService.process 定义为 process(self, input_video_path, enable_transcription=False)
+        # 简单起见，我们可以包装一下或者直接传参如果 run_in_threadpool 支持 (FastAPI context: generally supports *args, **kwargs)
+        # Verify: run_in_threadpool(func, *args, **kwargs) -> Yes.
+        result = await run_in_threadpool(service.process, temp_file_path, enable_transcription=enable_transcription)
         
         # 结果处理
         if result and result.get("ppt_file"):
@@ -29,7 +33,15 @@ async def run_video_task(task_id: str, temp_file_path: Path):
             # 注意: 这里假设 backend/output 挂载为 /static
             # 实际文件路径: backend/output/{task_id}/ppt_output/xxx.pptx
             download_url = f"/static/{task_id}/ppt_output/{ppt_filename}"
-            complete_task(task_id, download_url)
+            
+            # 处理字幕链接
+            transcript_url = None
+            if result.get("transcript_file"):
+                transcript_filename = Path(result["transcript_file"]).name
+                # /static/{task_id}/transcripts/{task_id}.txt
+                transcript_url = f"/static/{task_id}/transcripts/{transcript_filename}"
+            
+            complete_task(task_id, download_url, transcript_url=transcript_url)
         else:
             fail_task(task_id, "PPT 生成结果为空")
             
@@ -41,7 +53,8 @@ async def run_video_task(task_id: str, temp_file_path: Path):
 @router.post("/tasks/upload")
 async def upload_video(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    enable_transcription: bool = Form(False)
 ):
     """
     1. 上传视频
@@ -61,7 +74,7 @@ async def upload_video(
         raise HTTPException(status_code=500, detail="文件上传失败")
 
     # 加入后台队列
-    background_tasks.add_task(run_video_task, task_id, temp_file_path)
+    background_tasks.add_task(run_video_task, task_id, temp_file_path, enable_transcription)
     
     return {
         "task_id": task_id,

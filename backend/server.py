@@ -1,100 +1,134 @@
 # filename: backend/server.py
+import uuid
 import shutil
-import asyncio
+import logging
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 import aiofiles
 
-# 导入我们的处理模块 (确保 crop_ppt.py 和 extract_ppt.py 在同一目录下)
-from . import crop_ppt
-from . import extract_ppt
+# 导入应用模块
+from app.services.video_service import VideoService
+from app.core.task_manager import init_task, get_task_status, fail_task, complete_task
+from app.core.config import INPUT_DIR, OUTPUT_DIR, ALLOWED_EXTENSIONS
 
-app = FastAPI(title="Video2PPT Backend")
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# 设定基础路径
-# server.py 在 backend/ 目录下，input/output 在 backend/ 的父目录 (项目根目录)
-BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BACKEND_DIR.parent
-INPUT_DIR = PROJECT_ROOT / 'input'
-OUTPUT_DIR = PROJECT_ROOT / 'output'
+app = FastAPI(title="Video2PPT Backend API")
 
-# 确保目录存在
-INPUT_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# 允许跨域 (方便前端调用)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def process_video_task(video_path: Path):
+# 挂载静态文件目录，以便前端可以直接访问生成的 PPT 和图片
+# 访问地址: http://localhost:8000/static/output/...
+app.mount("/static/output", StaticFiles(directory=OUTPUT_DIR), name="static_output")
+
+def run_video_processing(task_id: str, video_path: Path, enable_transcription: bool):
     """
-    后台任务处理函数：
-    1. 调用 crop_ppt 进行裁剪
-    2. 如果裁剪成功，调用 extract_ppt 提取PPT
+    后台任务包装函数：执行视频处理并在完成后更新任务状态。
     """
     try:
-        print(f"Background Task Started: Processing {video_path.name}")
+        logger.info(f"Task {task_id}: 开始处理视频 {video_path.name}, 字幕={enable_transcription}")
         
-        # 1. 裁剪视频
-        # crop_ppt.process_video 返回裁剪后的视频路径 (Path 对象) 或 None
-        cropped_video_path = crop_ppt.process_video(video_path, OUTPUT_DIR)
+        # 初始化服务
+        service = VideoService(output_guid=task_id)
         
-        if not cropped_video_path:
-            print(f"Task Failed: Scaling/Cropping failed for {video_path.name}")
-            return
-
-        print(f"Cropping Successful: {cropped_video_path}")
-
-        # 2. 提取PPT
-        # extract_ppt.extract_key_frames_persistent_reference 返回生成的 PPT 路径 (Path 对象) 或 None
-        ppt_path = extract_ppt.extract_key_frames_persistent_reference(
-            video_path=cropped_video_path, 
-            output_base_dir=OUTPUT_DIR
-        )
-
-        if ppt_path:
-            print(f"Task Completed Successfully: PPT generated at {ppt_path}")
-        else:
-            print(f"Task Warning: No keyframes extracted for {video_path.name}")
-
+        # 执行处理 (耗时操作)
+        result = service.process(video_path, enable_transcription=enable_transcription)
+        
+        # 生成结果的 Web 访问 URL
+        # 假设 result['ppt_file'] 是绝对路径，我们需要转换为相对 /static 的 URL
+        ppt_url = None
+        transcript_url = None
+        
+        if result.get("ppt_file"):
+            ppt_name = Path(result["ppt_file"]).name
+            # 结构: output/{task_id}/ppt_output/{name}
+            # 但 VideoService 的 process 返回的是绝对路径
+            # 我们的静态挂载点是 output 根目录
+            # 所以 URL 应该是 /static/output/{task_id}/ppt_output/{ppt_name}
+            ppt_url = f"/static/output/{task_id}/ppt_output/{ppt_name}"
+            
+        if result.get("transcript_file"):
+            txt_name = Path(result["transcript_file"]).name
+            transcript_url = f"/static/output/{task_id}/transcripts/{txt_name}"
+            
+        # 标记任务完成
+        complete_task(task_id, result_url=ppt_url, transcript_url=transcript_url)
+        logger.info(f"Task {task_id}: 处理完成")
+        
     except Exception as e:
-        print(f"Task Error: An unexpected error occurred while processing {video_path.name}: {e}")
+        logger.error(f"Task {task_id}: 处理失败 - {e}")
+        fail_task(task_id, str(e))
 
 @app.post("/process")
-async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_video(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    enable_transcription: bool = Form(False)
+):
     """
-    接收上传的视频文件，保存后启动后台处理任务。
+    接收视频上传，启动后台处理任务。
+    返回 task_id 用于轮询进度。
     """
-    # 验证文件扩展名
     filename = file.filename
     if not filename:
          raise HTTPException(status_code=400, detail="Invalid filename")
 
     file_ext = Path(filename).suffix.lower()
-    allowed_extensions = {'.mp4', '.m4s', '.avi', '.mov', '.mkv'}
-    
-    if file_ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {allowed_extensions}")
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"不支持的文件格式. 允许: {ALLOWED_EXTENSIONS}")
 
-    # 保存文件到 input 目录
-    # 为了防止文件名冲突，可以使用 uuid 重命名，这里简单起见使用原文件名
-    # 但建议在生产环境中处理文件名冲突
-    save_path = INPUT_DIR / filename
+    # 生成唯一的任务 ID
+    task_id = str(uuid.uuid4())
+    
+    # 定义保存路径
+    save_path = INPUT_DIR / f"{task_id}_{filename}"
     
     try:
+        # 保存文件
         async with aiofiles.open(save_path, 'wb') as out_file:
-            # 这里的 read/write 需要分块处理大文件，aiofiles + shutil 配合
-            # 或者直接循环读取 chunks
             while content := await file.read(1024 * 1024):  # 1MB chunks
                 await out_file.write(content)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+        raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
-    # 添加后台任务
-    background_tasks.add_task(process_video_task, save_path)
+    # 初始化任务状态
+    init_task(task_id)
+    
+    # 添加到后台任务队列
+    background_tasks.add_task(run_video_processing, task_id, save_path, enable_transcription)
 
     return {
-        "message": "File uploaded successfully. Processing started in background.",
-        "filename": filename,
-        "saved_path": str(save_path)
+        "message": "视频已上传，后台处理中",
+        "task_id": task_id,
+        "filename": filename
     }
+
+@app.get("/task/{task_id}")
+def query_task_status(task_id: str):
+    """
+    查询任务处理进度和结果
+    """
+    status = get_task_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return status
 
 @app.get("/")
 def read_root():
-    return {"message": "Video2PPT Backend is running. POST to /process to start."}
+    return {"message": "Video2PPT Backend Service is Running"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # 为了开发方便，可以直接运行此文件
+    uvicorn.run(app, host="0.0.0.0", port=8000)
