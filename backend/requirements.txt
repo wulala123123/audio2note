@@ -19,7 +19,10 @@ paddlepaddle-gpu==2.6.1.post120
 paddleocr==2.9.1
 
 # Speech-to-Text
-google-genai==1.56.0
-moviepy==2.2.1
-funasr==1.2.9
-modelscope==1.33.0
+google-genai
+moviepy
+funasr
+modelscope
+
+# Logging
+loguru

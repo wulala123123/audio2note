@@ -50,9 +50,7 @@ backend/
 │       ├── ppt_output/                  # 最终 PPTX 文件
 │       └── transcripts/                 # 转录文本文件
 ├── temp/                                # 临时上传文件 (处理完自动删除)
-├── libs/                                # [可选] 本地 DLL 依赖 (如 zlibwapi.dll)
-├── requirements.txt
-└── server.py                            # (备用) 独立启动脚本
+└──requirements.txt
 ```
 
 ---
