@@ -123,7 +123,7 @@ async def upload_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="待处理的视频文件"),
     enable_ppt_extraction: bool = Form(True, description="是否启用 PPT 提取"),
-    enable_audio_transcription: bool = Form(False, description="是否启用音频转录")
+    enable_audio_transcription: bool = Form(True, description="是否启用音频转录")
 ) -> dict:
     """
     上传视频并创建异步处理任务
@@ -135,7 +135,7 @@ async def upload_video(
         background_tasks: FastAPI 后台任务管理器
         file: 上传的视频文件 (multipart/form-data)
         enable_ppt_extraction: 是否执行 PPT 提取 (默认 True)
-        enable_audio_transcription: 是否执行音频转录 (默认 False)
+        enable_audio_transcription: 是否执行音频转录 (默认 True)
     
     Returns:
         dict: 包含 task_id 和初始状态

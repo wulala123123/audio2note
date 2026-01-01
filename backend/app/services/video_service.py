@@ -98,7 +98,7 @@ class VideoService:
         self, 
         input_video_path: Path, 
         enable_ppt_extraction: bool = True,
-        enable_audio_transcription: bool = False
+        enable_audio_transcription: bool = True
     ) -> dict:
         """
         视频处理主入口: 编排 PPT 提取与音频转录两个独立模块
@@ -409,27 +409,62 @@ class VideoService:
         logger.debug(f"   完整命令: {' '.join(cmd)}")
         
         import time
+        import re
         ffmpeg_start = time.time()
         
         try:
-            # Why encoding='utf-8' + errors='replace'?
-            #   Windows 中文系统默认使用 GBK 编码读取 subprocess 输出，
-            #   但 FFmpeg 输出包含 UTF-8 字符，会导致 UnicodeDecodeError。
-            result = subprocess.run(
+            # ========== 使用 Popen 实时读取 FFmpeg 进度 ==========
+            # Why Popen?
+            #   subprocess.run() 是阻塞式的，只能在执行完毕后获取输出。
+            #   Popen 允许实时读取 stderr，解析 FFmpeg 的 frame=/time=/speed= 进度信息。
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding='utf-8',
-                errors='replace',
-                timeout=300  # 5 分钟超时
+                errors='replace'
             )
+            
+            # FFmpeg 进度信息格式示例:
+            # frame=  123 fps= 45 q=28.0 size=    1024kB time=00:00:05.00 bitrate=1677.7kbits/s speed=1.50x
+            progress_pattern = re.compile(
+                r'frame=\s*(\d+)\s+fps=\s*([\d.]+)\s.*time=(\d+:\d+:\d+\.\d+).*speed=\s*([\d.]+)x'
+            )
+            
+            last_log_time = time.time()
+            stderr_lines = []  # 收集所有 stderr 用于错误诊断
+            
+            logger.info("   📊 FFmpeg 实时进度:")
+            
+            # 实时读取 stderr (FFmpeg 进度输出在 stderr)
+            for line in process.stderr:
+                stderr_lines.append(line)
+                
+                # 解析进度信息
+                match = progress_pattern.search(line)
+                if match:
+                    frame_num = match.group(1)
+                    fps = match.group(2)
+                    time_pos = match.group(3)
+                    speed = match.group(4)
+                    
+                    # 限制日志频率: 每 2 秒最多打印一次
+                    current_time = time.time()
+                    if current_time - last_log_time >= 2.0:
+                        logger.info(f"      ⏱️ frame={frame_num} fps={fps} time={time_pos} speed={speed}x")
+                        last_log_time = current_time
+            
+            # 等待进程结束
+            process.wait()
             
             ffmpeg_time = time.time() - ffmpeg_start
             
-            if result.returncode != 0:
+            if process.returncode != 0:
                 # 只打印 stderr 尾部，避免日志过长
-                stderr_tail = result.stderr[-500:] if len(result.stderr) > 500 else result.stderr
-                logger.error(f"❌ FFmpeg 裁剪失败 (returncode={result.returncode}, 耗时: {ffmpeg_time:.1f}s)")
+                stderr_text = ''.join(stderr_lines)
+                stderr_tail = stderr_text[-500:] if len(stderr_text) > 500 else stderr_text
+                logger.error(f"❌ FFmpeg 裁剪失败 (returncode={process.returncode}, 耗时: {ffmpeg_time:.1f}s)")
                 logger.error(f"   stderr: {stderr_tail}")
                 
                 # 回退到 CPU 裁剪
@@ -558,67 +593,69 @@ class VideoService:
             actual_progress = 30 + int(percent * 0.4)
             update_task_progress(self.output_guid, actual_progress, message)
         
-        # ========== L1 + L2: GPU 帧处理 ==========
-        logger.info("🔄 L1+L2: 开始 GPU 帧处理...")
+        try:
+            # ========== L1 + L2: GPU 帧处理 ==========
+            logger.info("🔄 L1+L2: 开始 GPU 帧处理...")
+            
+            for best_shot in self.frame_processor.extract_best_shots(
+                cropped_video, 
+                progress_callback=progress_callback
+            ):
+                processed_shots += 1
+                
+                logger.debug(f"   🎬 候选帧 #{processed_shots}: 帧号={best_shot.frame_index}, "
+                            f"清晰度={best_shot.sharpness_score:.4f}")
+                
+                # ----- 从原始视频读取对应帧 -----
+                # Why 用原始视频?
+                #   裁剪视频用于分析 (排除干扰)，但最终截图要保留完整画面质量
+                original_frame = self.frame_processor.get_frame_at_index(
+                    original_video,
+                    best_shot.frame_index
+                )
+                
+                if original_frame is None:
+                    logger.warning(f"   ⚠️ 无法读取原始帧 {best_shot.frame_index}")
+                    continue
+                
+                # ========== L3: OCR 语义去重 ==========
+                update_task_progress(
+                    self.output_guid, 
+                    70 + int((processed_shots / max(processed_shots, 1)) * 20),
+                    f"OCR 去重检查: 第 {processed_shots} 个候选帧"
+                )
+                
+                is_duplicate, text = self.ocr_deduper.is_duplicate(original_frame)
+                
+                if is_duplicate:
+                    logger.debug(f"   🔄 帧 {best_shot.frame_index} 被 OCR 去重丢弃 (文本相似度过高)")
+                    continue
+                
+                # ========== 保存到 PPT ==========
+                self._save_frame_to_ppt(original_frame, prs, saved_count)
+                saved_count += 1
+                
+                # 更新 OCR 缓存
+                self.ocr_deduper.mark_as_saved(text)
+                
+                logger.info(f"   📄 保存 PPT 第 {saved_count} 页 (帧 {best_shot.frame_index}, "
+                           f"清晰度: {best_shot.sharpness_score:.4f})")
+            
+            # ========== 保存 PPT ==========
+            if saved_count > 0:
+                prs.save(str(ppt_path))
+                logger.success(f"✅ PPT 生成完毕，共 {saved_count} 页: {ppt_path.name}")
+                return ppt_path
+            else:
+                logger.warning("⚠️ 未提取到任何有效页面，无法生成 PPT")
+                return None
         
-        for best_shot in self.frame_processor.extract_best_shots(
-            cropped_video, 
-            progress_callback=progress_callback
-        ):
-            processed_shots += 1
-            
-            logger.debug(f"   🎬 候选帧 #{processed_shots}: 帧号={best_shot.frame_index}, "
-                        f"清晰度={best_shot.sharpness_score:.4f}")
-            
-            # ----- 从原始视频读取对应帧 -----
-            # Why 用原始视频?
-            #   裁剪视频用于分析 (排除干扰)，但最终截图要保留完整画面质量
-            original_frame = self.frame_processor.get_frame_at_index(
-                original_video,
-                best_shot.frame_index
-            )
-            
-            if original_frame is None:
-                logger.warning(f"   ⚠️ 无法读取原始帧 {best_shot.frame_index}")
-                continue
-            
-            # ========== L3: OCR 语义去重 ==========
-            update_task_progress(
-                self.output_guid, 
-                70 + int((processed_shots / max(processed_shots, 1)) * 20),
-                f"OCR 去重检查: 第 {processed_shots} 个候选帧"
-            )
-            
-            is_duplicate, text = self.ocr_deduper.is_duplicate(original_frame)
-            
-            if is_duplicate:
-                logger.debug(f"   🔄 帧 {best_shot.frame_index} 被 OCR 去重丢弃 (文本相似度过高)")
-                continue
-            
-            # ========== 保存到 PPT ==========
-            self._save_frame_to_ppt(original_frame, prs, saved_count)
-            saved_count += 1
-            
-            # 更新 OCR 缓存
-            self.ocr_deduper.mark_as_saved(text)
-            
-            logger.info(f"   📄 保存 PPT 第 {saved_count} 页 (帧 {best_shot.frame_index}, "
-                       f"清晰度: {best_shot.sharpness_score:.4f})")
-        
-        # ========== GPU 显存清理 ==========
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            logger.debug("🧹 GPU 显存已清理")
-        
-        # ========== 保存 PPT ==========
-        if saved_count > 0:
-            prs.save(str(ppt_path))
-            logger.success(f"✅ PPT 生成完毕，共 {saved_count} 页: {ppt_path.name}")
-            return ppt_path
-        else:
-            logger.warning("⚠️ 未提取到任何有效页面，无法生成 PPT")
-            return None
+        finally:
+            # ========== GPU 显存清理 (无论成功或异常都会执行) ==========
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.debug("🧹 GPU 显存已清理 (finally block)")
 
     def _save_frame_to_ppt(self, frame, prs, index: int) -> None:
         """

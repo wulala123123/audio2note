@@ -108,6 +108,27 @@ async def lifespan(app: FastAPI):
     # Shutdown: 清理资源
     logger.info("=" * 60)
     logger.info("👋 Video2Note 后端服务关闭中...")
+    
+    # ========== GPU 显存释放 ==========
+    # Why 在 shutdown 阶段清理?
+    #   - 确保服务优雅关闭时释放所有 GPU 资源
+    #   - 避免热重载时显存累积占用
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.debug("🧹 PyTorch GPU 显存已释放")
+    except ImportError:
+        pass
+    
+    try:
+        import paddle
+        if paddle.device.is_compiled_with_cuda():
+            paddle.device.cuda.empty_cache()
+            logger.debug("🧹 PaddlePaddle GPU 显存已释放")
+    except ImportError:
+        pass
+    
     logger.info("=" * 60)
 
 
