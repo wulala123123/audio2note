@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Dropzone } from './components/Dropzone';
 import { ProcessingView } from './components/ProcessingView';
 import { SuccessCard } from './components/SuccessCard';
+import { ConfigPanel } from './components/ConfigPanel';
 import { Github, Twitter } from 'lucide-react';
 import { uploadVideo, checkStatus, getDownloadUrl } from './services/api';
 
@@ -10,7 +11,13 @@ function App() {
   const [status, setStatus] = useState('idle'); // idle, uploading, processing, success
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('');
-  const [downloadUrl, setDownloadUrl] = useState('');
+  const [result, setResult] = useState(null);
+
+  const [config, setConfig] = useState({
+    enable_ppt_extraction: true,
+    enable_audio_transcription: true
+  });
+
   const pollingRef = useRef(null);
 
   useEffect(() => {
@@ -19,10 +26,14 @@ function App() {
     }
   }, []);
 
+  const handleConfigChange = (key, value) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
+  };
+
   const handleRealUpload = async (file) => {
     try {
       setStatus('uploading');
-      const { task_id } = await uploadVideo(file[0]); // Dropzone returns array
+      const { task_id } = await uploadVideo(file[0], config); // Dropzone returns array
 
       setStatus('processing');
       startPolling(task_id);
@@ -43,12 +54,21 @@ function App() {
         if (data.message) setMessage(data.message);
 
         // Check completion
-        if (data.progress === 100 || data.result_url) {
+        if (data.status === 'completed' || data.result) {
           clearInterval(pollingRef.current);
-          if (data.result_url) {
-            setDownloadUrl(getDownloadUrl(data.result_url));
-          }
+
+          // Normalize URLs if present
+          const finalResult = {
+            ppt_download_url: data.result_url ? getDownloadUrl(data.result_url) : null,
+            transcript_download_url: data.transcript_url ? getDownloadUrl(data.transcript_url) : null
+          };
+
+          setResult(finalResult);
           setStatus('success');
+        } else if (data.status === 'failed') {
+          clearInterval(pollingRef.current);
+          alert(`任务失败: ${data.message}`);
+          setStatus('idle');
         }
       } catch (error) {
         console.error("Status check failed:", error);
@@ -59,6 +79,8 @@ function App() {
   const handleReset = () => {
     setStatus('idle');
     setProgress(0);
+    setMessage('');
+    setResult(null);
   };
 
   return (
@@ -70,7 +92,7 @@ function App() {
             V
           </div>
           <h1 className="text-xl font-bold tracking-tight text-white">
-            Video to <span className="text-indigo-400">PPT</span>
+            Video to <span className="text-indigo-400">Note</span>
           </h1>
         </div>
         <nav className="flex items-center gap-4 text-sm font-medium text-slate-400">
@@ -88,23 +110,27 @@ function App() {
         <div className="w-full max-w-4xl relative z-10">
 
           {status === 'idle' && (
-            <div className="text-center mb-12 space-y-4">
-              <motion.h1
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-4xl md:text-6xl font-bold tracking-tight text-white"
-              >
-                视频转 PPT, <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">一键搞定</span>
-              </motion.h1>
-              <motion.p
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="text-lg text-slate-400 max-w-2xl mx-auto"
-              >
-                上传课程视频、会议录屏或演讲视频，AI 自动提取关键帧、生成大纲并导出为可编辑的 PPTX 文件。
-              </motion.p>
-            </div>
+            <>
+              <div className="text-center mb-12 space-y-4">
+                <motion.h1
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-4xl md:text-6xl font-bold tracking-tight text-white"
+                >
+                  视频转 Note, <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">一键搞定</span>
+                </motion.h1>
+                <motion.p
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="text-lg text-slate-400 max-w-2xl mx-auto"
+                >
+                  上传课程视频、会议录屏或演讲视频，AI 自动提取关键帧、生成大纲并导出为可编辑的 PPTX 文件。
+                </motion.p>
+              </div>
+
+              <ConfigPanel config={config} onConfigChange={handleConfigChange} />
+            </>
           )}
 
           <AnimatePresence mode="wait">
@@ -152,7 +178,7 @@ function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 className="w-full"
               >
-                <SuccessCard onReset={handleReset} downloadUrl={downloadUrl} />
+                <SuccessCard onReset={handleReset} result={result} />
               </motion.div>
             )}
           </AnimatePresence>

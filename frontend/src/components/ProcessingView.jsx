@@ -1,69 +1,101 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Sparkles } from 'lucide-react';
-
-const LOG_MESSAGES = [
-    "正在分析关键帧...",
-    "检测画面内容...",
-    "正在去除重复页面...",
-    "优化图像清晰度...",
-    "正在生成 PowerPoint 文件...",
-    "打包资源中...",
-];
+import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
+import { Loader2, Terminal, ChevronRight } from 'lucide-react';
 
 export const ProcessingView = ({ progress, message }) => {
-    const [logIndex, setLogIndex] = useState(0);
+    const [logs, setLogs] = useState([]);
+    const scrollRef = useRef(null);
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            setLogIndex(prev => (prev + 1) % LOG_MESSAGES.length);
-        }, 1200);
-        return () => clearInterval(interval);
-    }, []);
+        if (message) {
+            setLogs(prev => {
+                // Avoid duplicate consecutive messages
+                if (prev.length > 0 && prev[prev.length - 1] === message) return prev;
+                return [...prev, message];
+            });
+        }
+    }, [message]);
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [logs]);
 
     return (
-        <div className="w-full max-w-xl mx-auto text-center space-y-10 py-12">
-            <div className="space-y-6">
+        <div className="w-full max-w-2xl mx-auto space-y-8 py-8">
+            {/* Progress Circle & Status */}
+            <div className="flex flex-col items-center justify-center gap-6">
                 <div className="relative">
-                    <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-                        className="w-20 h-20 mx-auto rounded-full border-2 border-slate-800 border-t-indigo-500"
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center text-slate-400 font-mono text-lg">
-                        {Math.round(progress)}%
-                    </div>
-                </div>
-
-                <div className="space-y-2">
-                    <h3 className="text-2xl font-light text-slate-100 flex items-center justify-center gap-2">
-                        <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
-                        正在处理视频
-                    </h3>
-
-                    <div className="h-6 overflow-hidden relative">
-                        <AnimatePresence mode="wait">
-                            <motion.p
-                                key={message || logIndex}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="text-slate-500 text-sm font-light"
-                            >
-                                {message || LOG_MESSAGES[logIndex]}
-                            </motion.p>
-                        </AnimatePresence>
+                    <svg className="w-32 h-32 transform -rotate-90">
+                        <circle
+                            cx="64"
+                            cy="64"
+                            r="60"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="transparent"
+                            className="text-slate-800"
+                        />
+                        <motion.circle
+                            cx="64"
+                            cy="64"
+                            r="60"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="transparent"
+                            className="text-indigo-500"
+                            initial={{ pathLength: 0 }}
+                            animate={{ pathLength: progress / 100 }}
+                            transition={{ ease: "linear" }}
+                        />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-3xl font-bold text-white">{Math.round(progress)}%</span>
+                        <span className="text-xs text-slate-400 mt-1 uppercase tracking-wider">Processing</span>
                     </div>
                 </div>
             </div>
 
-            <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                <motion.div
-                    className="h-full bg-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.5)]"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
-                    transition={{ ease: "linear" }}
-                />
+            {/* Terminal Window */}
+            <div className="bg-[#1e1e1e] rounded-lg border border-slate-800 shadow-2xl overflow-hidden font-mono text-sm">
+                <div className="bg-[#2d2d2d] px-4 py-2 flex items-center gap-2 border-b border-black/20">
+                    <div className="flex gap-1.5">
+                        <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                        <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                        <div className="w-3 h-3 rounded-full bg-green-500/80" />
+                    </div>
+                    <div className="ml-2 flex items-center gap-1.5 text-slate-400 text-xs">
+                        <Terminal className="w-3 h-3" />
+                        <span>backend-worker — zsh</span>
+                    </div>
+                </div>
+
+                <div
+                    ref={scrollRef}
+                    className="h-64 overflow-y-auto p-4 space-y-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+                >
+                    {logs.length === 0 && (
+                        <div className="text-slate-500 italic">Waiting for logs...</div>
+                    )}
+                    {logs.map((log, i) => (
+                        <motion.div
+                            key={i}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className="flex items-start gap-2 text-slate-300"
+                        >
+                            <span className="text-indigo-400 mt-0.5"><ChevronRight className="w-3 h-3" /></span>
+                            <span className="break-all">{log}</span>
+                        </motion.div>
+                    ))}
+                    {/* Blinking Cursor */}
+                    <motion.div
+                        animate={{ opacity: [0, 1, 0] }}
+                        transition={{ repeat: Infinity, duration: 0.8 }}
+                        className="w-2 h-4 bg-indigo-500 ml-5 mt-1"
+                    />
+                </div>
             </div>
         </div>
     );

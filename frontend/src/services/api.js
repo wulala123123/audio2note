@@ -7,13 +7,18 @@ const api = axios.create({
 });
 
 /**
- * Uploads a video file to the backend.
+ * Uploads a video file to the backend with processing options.
  * @param {File} file 
+ * @param {Object} options
+ * @param {boolean} options.enable_ppt_extraction
+ * @param {boolean} options.enable_audio_transcription
  * @returns {Promise<{task_id: string}>}
  */
-export const uploadVideo = async (file) => {
+export const uploadVideo = async (file, options = {}) => {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('enable_ppt_extraction', options.enable_ppt_extraction ?? true);
+    formData.append('enable_audio_transcription', options.enable_audio_transcription ?? true);
 
     const response = await api.post('/api/v1/tasks/upload', formData, {
         headers: {
