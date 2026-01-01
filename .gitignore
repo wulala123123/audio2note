@@ -2,6 +2,7 @@
 .DS_Store
 Thumbs.db
 EHthumbs.db
+.antigravityrules
 
 # Python / Backend
 __pycache__/
