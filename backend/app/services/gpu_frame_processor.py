@@ -234,7 +234,7 @@ class GPUFrameProcessor:
         
         Args:
             video_path: 输入视频路径
-                - 建议传入代理视频以加速处理
+                - 建议传入轻量视频以加速处理
             progress_callback: 进度回调函数
                 - 签名: callback(percent: int, message: str)
                 - 用于更新任务进度条

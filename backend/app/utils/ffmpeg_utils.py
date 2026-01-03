@@ -2,7 +2,7 @@
 文件名: ffmpeg_utils.py
 功能描述: FFmpeg 封装模块，提供健壮的视频处理工具函数
 核心逻辑:
-    - generate_proxy_video(): 生成低分辨率代理视频 (640px, 5fps)
+    - generate_lightweight_video(): 生成低分辨率轻量视频 (640px, 5fps)
     - extract_frame_at_timestamp(): 从原视频精确截取指定时间点画面
     - GPU (h264_nvenc) → CPU (libx264) 自动回退机制
 
@@ -46,10 +46,10 @@ def _check_nvenc_available() -> bool:
 
 
 # ============================================================
-#              代理视频生成
+#              轻量视频生成
 # ============================================================
 
-def generate_proxy_video(
+def generate_lightweight_video(
     source_video: Path,
     output_path: Path,
     crop_box: Tuple[int, int, int, int],
@@ -58,9 +58,9 @@ def generate_proxy_video(
     progress_callback: Optional[Callable[[int, str], None]] = None
 ) -> Optional[Path]:
     """
-    生成代理视频 (Proxy Media) - 核心优化函数
+    生成轻量视频 (Lightweight Media) - 核心优化函数
     
-    对原视频进行裁剪、缩放、降帧处理，生成用于后续分析的轻量级代理。
+    对原视频进行裁剪、缩放、降帧处理，生成用于后续分析的轻量级视频。
     极大提升 L1/L2/L3 漏斗模型的处理速度。
     
     FFmpeg 滤镜链:
@@ -68,7 +68,7 @@ def generate_proxy_video(
     
     Args:
         source_video: 原始视频路径
-        output_path: 代理视频输出路径
+        output_path: 轻量视频输出路径
         crop_box: 裁剪区域 (x, y, w, h)
             - 来自 ROI 检测的 PPT 区域
         target_width: 缩放目标宽度 (高度自适应)
@@ -79,7 +79,7 @@ def generate_proxy_video(
             - 签名: callback(percent: int, message: str)
     
     Returns:
-        Path: 生成的代理视频路径，失败返回 None
+        Path: 生成的轻量视频路径，失败返回 None
     
     Note:
         自动尝试 GPU 编码 (h264_nvenc)，失败则回退到 CPU (libx264)
@@ -137,7 +137,7 @@ def generate_proxy_video(
     if success:
         return output_path
     
-    logger.error("❌ 代理视频生成失败 (GPU/CPU 均失败)")
+    logger.error("❌ 轻量视频生成失败 (GPU/CPU 均失败)")
     return None
 
 
@@ -164,7 +164,7 @@ def _run_ffmpeg_encode(
         bool: 编码是否成功
     """
     mode_str = "GPU (h264_nvenc)" if use_gpu else "CPU (libx264)"
-    logger.info(f"🎬 开始生成代理视频 [{mode_str}]")
+    logger.info(f"🎬 开始生成轻量视频 [{mode_str}]")
     logger.info(f"   📂 输入: {source_video.name}")
     logger.info(f"   📂 输出: {output_path.name}")
     logger.info(f"   🔧 滤镜: {vf_filter}")
@@ -181,7 +181,7 @@ def _run_ffmpeg_encode(
         cmd.extend([
             "-c:v", "h264_nvenc",
             "-preset", "p1",  # NVENC 最快预设
-            "-cq", "28",      # 质量控制 (代理视频可容忍更高压缩)
+            "-cq", "28",      # 质量控制 (轻量视频可容忍更高压缩)
         ])
     else:
         cmd.extend([
@@ -237,16 +237,16 @@ def _run_ffmpeg_encode(
                 # 限制回调频率 (每 1 秒最多一次)
                 now = time.time()
                 if progress_callback and now - last_progress_time >= 1.0:
-                    progress_callback(percent, f"生成代理视频: {percent}%")
+                    progress_callback(percent, f"生成轻量视频: {percent}%")
                     last_progress_time = now
         
         process.wait()
         elapsed = time.time() - start_time
         
         if process.returncode == 0:
-            logger.success(f"✅ 代理视频生成完成 [{mode_str}] 耗时: {elapsed:.1f}s")
+            logger.success(f"✅ 轻量视频生成完成 [{mode_str}] 耗时: {elapsed:.1f}s")
             if progress_callback:
-                progress_callback(100, "代理视频生成完成")
+                progress_callback(100, "轻量视频生成完成")
             return True
         else:
             stderr_text = ''.join(stderr_lines)
@@ -311,7 +311,7 @@ def extract_frame_at_timestamp(
     确保截取的帧与分析阶段确定的时间戳完全对应。
     
     Why 使用原视频?
-        代理视频是低分辨率的，最终 PPT 需要高清画面。
+        轻量视频是低分辨率的，最终 PPT 需要高清画面。
         通过时间戳锚点，从原视频截取可保留完整画质。
     
     Args:

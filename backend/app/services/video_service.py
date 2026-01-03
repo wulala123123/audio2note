@@ -3,24 +3,25 @@
 功能描述: 视频处理核心服务，实现 GPU 加速的 PPT 提取与音频转录编排
 核心逻辑:
     - _locate_ppt_region(): 使用 Canny 边缘检测定位视频中的 PPT 区域
-    - _generate_proxy(): 生成代理视频 (640px, 5fps) 用于加速分析
+    - _generate_lightweight_video(): 生成轻量视频 (640px, 5fps) 用于加速分析
     - _run_funnel_analysis(): 三层漏斗 PPT 提取 (L1帧差 + L2清晰度 + L3 OCR去重)
     - _high_res_capture(): 高清回溯 - 从原视频截取最终画面
     - process(): 主入口，编排 PPT 提取与音频转录两个独立模块
 
-全链路架构 (Proxy Media Workflow):
+全链路架构 (Lightweight Media Workflow):
     1. Step 1.1: ROI Detection - 定位 PPT 区域
-    2. Step 1.2: Proxy Generation - 生成代理视频 (640px, 5fps, 去音频)
-    3. Step 1.3: Funnel Analysis - 三层漏斗分析代理视频
+    2. Step 1.2: Lightweight Video - 生成轻量视频 (640px, 5fps, 去音频)
+    3. Step 1.3: Funnel Analysis - 三层漏斗分析轻量视频
        - L1: 帧差检测 (场景分割)
        - L2: 清晰度择优 (选冠军帧)
-       - L3: OCR 语义去重 (过滤重复页)
+       - L3: OCR 语义去重 (过滤重复页 + 非PPT页面)
     4. Step 1.4: High-Res Capture - 从原视频高清回溯
 
 设计亮点:
     - **Timestamp First**: 所有逻辑基于时间戳 (秒 float)，严禁依赖 frame_index
-    - 代理视频分析 (快速) + 原视频截取 (高清) 分离
+    - 轻量视频分析 (快速) + 原视频截取 (高清) 分离
     - Generator 模式流式输出，支持实时进度更新
+    - 流程结束自动清理临时文件 (轻量视频)
 """
 import cv2
 import shutil
@@ -37,7 +38,7 @@ from app.services.audio_service import get_audio_transcriber
 from app.services.gpu_frame_processor import GPUFrameProcessor, BestShot
 from app.services.ocr_deduper import OCRDeduper
 from app.utils.ffmpeg_utils import (
-    generate_proxy_video,
+    generate_lightweight_video,
     extract_frame_at_timestamp,
     extract_frames_batch
 )
@@ -49,10 +50,10 @@ class VideoService:
     
     职责: 编排整个视频 -> PPT 转换流程，协调各子模块工作
     
-    核心流程 (Proxy Media Workflow):
+    核心流程 (Lightweight Media Workflow):
         1. 定位 PPT 区域 (ROI Detection)
-        2. 生成代理视频 (640px, 5fps)
-        3. 在代理上运行三层漏斗分析
+        2. 生成轻量视频 (640px, 5fps)
+        3. 在轻量视频上运行三层漏斗分析
         4. 用时间戳回溯原视频截取高清画面
     
     Attributes:
@@ -78,18 +79,20 @@ class VideoService:
         self.base_output_path = OUTPUT_DIR / output_guid
         
         # 定义子目录结构
-        self.proxy_dir = self.base_output_path / "proxy"          # 代理视频临时目录
+        # 轻量视频临时目录：放入 temp 下，流程结束后自动清理
+        self.temp_video_dir = TEMP_DIR / output_guid
         self.debug_images_dir = self.base_output_path / "debug_images"
         self.ppt_images_dir = self.base_output_path / "ppt_images"
         self.ppt_output_dir = self.base_output_path / "ppt_output"
         self.transcripts_dir = self.base_output_path / "transcripts"
         
         # 创建所需文件夹
-        for p in [self.proxy_dir, self.debug_images_dir, 
+        for p in [self.temp_video_dir, self.debug_images_dir, 
                   self.ppt_images_dir, self.ppt_output_dir, self.transcripts_dir]:
             p.mkdir(parents=True, exist_ok=True)
         
         logger.debug(f"📁 输出目录已创建: {self.base_output_path}")
+        logger.debug(f"📁 临时目录已创建: {self.temp_video_dir}")
         
         # ========== 初始化 GPU 处理器 (L1 + L2) ==========
         # 参数说明:
@@ -97,8 +100,8 @@ class VideoService:
         #   min_scene_duration: 场景最短持续时间，过滤动态视频片段
         #   sample_interval: 采样间隔 (秒)，每 0.2 秒取一次样 (每秒 5 个点)
         self.frame_processor = GPUFrameProcessor(
-            diff_threshold=0.04,
-            min_scene_duration=1.5,
+            diff_threshold=0.05,
+            min_scene_duration=1,
             sample_interval=0.2  # 每 0.2 秒采样一次
         )
         
@@ -151,7 +154,7 @@ class VideoService:
         #               模块 1: PPT 提取 (条件执行)
         # ============================================================
         if enable_ppt_extraction:
-            logger.info("📊 [PPT 提取模块] 开始执行 (Proxy Media Workflow)...")
+            logger.info("📊 [PPT 提取模块] 开始执行 (Lightweight Media Workflow)...")
             
             # 进度区间分配:
             #   - 若同时启用音频: PPT 占 0-85%, 音频占 85-100%
@@ -170,23 +173,23 @@ class VideoService:
             
             logger.success(f"✅ PPT 区域定位成功: x={bbox[0]}, y={bbox[1]}, w={bbox[2]}, h={bbox[3]}")
             
-            # ----- Step 1.2: 生成代理视频 -----
-            update_task_progress(self.output_guid, 10, "正在生成代理视频 (GPU 加速)...")
-            logger.info("🎥 Step 1.2: 生成代理视频 (640px, 5fps)")
+            # ----- Step 1.2: 生成轻量视频 -----
+            update_task_progress(self.output_guid, 10, "正在生成轻量视频 (GPU 加速)...")
+            logger.info("🎥 Step 1.2: 生成轻量视频 (640px, 5fps)")
             
-            proxy_path = self._generate_proxy(input_video_path, bbox)
+            lightweight_video_path = self._generate_lightweight_video(input_video_path, bbox)
             
-            if not proxy_path:
-                logger.error("❌ 代理视频生成失败")
-                raise ValueError("代理视频生成失败")
+            if not lightweight_video_path:
+                logger.error("❌ 轻量视频生成失败")
+                raise ValueError("轻量视频生成失败")
             
-            logger.success(f"✅ 代理视频生成完成: {proxy_path.name}")
+            logger.success(f"✅ 轻量视频生成完成: {lightweight_video_path.name}")
             
             # ----- Step 1.3: 三层漏斗分析 -----
             update_task_progress(self.output_guid, 25, "正在进行三层漏斗分析...")
             logger.info("🎯 Step 1.3: 三层漏斗分析 (L1→L2→L3)")
             
-            final_timestamps = self._run_funnel_analysis(proxy_path)
+            final_timestamps = self._run_funnel_analysis(lightweight_video_path)
             
             logger.info(f"📊 漏斗分析结果: 共 {len(final_timestamps)} 个有效时间点")
             
@@ -242,6 +245,11 @@ class VideoService:
             except Exception as e:
                 logger.exception(f"❌ 音频转录过程出错: {e}")
         
+        # ============================================================
+        #               流程结束: 清理临时文件
+        # ============================================================
+        self._cleanup_temp_files()
+        
         # ========== 返回结果 ==========
         result = {
             "guid": self.output_guid,
@@ -258,6 +266,19 @@ class VideoService:
         logger.info("=" * 50)
         
         return result
+
+    def _cleanup_temp_files(self) -> None:
+        """
+        清理临时文件
+        
+        在处理流程结束后调用，删除轻量视频等临时文件。
+        """
+        try:
+            if self.temp_video_dir.exists():
+                shutil.rmtree(self.temp_video_dir)
+                logger.info(f"🗑️ 已清理临时目录: {self.temp_video_dir}")
+        except Exception as e:
+            logger.warning(f"⚠️ 清理临时目录失败: {e}")
 
     def _locate_ppt_region(self, video_path: Path) -> Tuple[int, int, int, int] | None:
         """
@@ -362,17 +383,17 @@ class VideoService:
         finally:
             cap.release()
 
-    def _generate_proxy(
+    def _generate_lightweight_video(
         self, 
         source_video: Path, 
         crop_bbox: Tuple[int, int, int, int]
     ) -> Optional[Path]:
         """
-        生成代理视频 (核心优化)
+        生成轻量视频 (核心优化)
         
-        调用 FFmpeg 生成低分辨率代理视频用于后续分析。
+        调用 FFmpeg 生成低分辨率轻量视频用于后续分析。
         
-        代理参数:
+        轻量视频参数:
             - crop: 只保留 PPT 区域
             - scale: 宽缩放到 640px
             - fps: 降帧到 5 FPS
@@ -383,18 +404,18 @@ class VideoService:
             crop_bbox: 裁剪区域 (x, y, w, h)
         
         Returns:
-            Path: 代理视频路径，失败返回 None
+            Path: 轻量视频路径，失败返回 None
         """
-        proxy_path = self.proxy_dir / f"{self.output_guid}_proxy.mp4"
+        lightweight_path = self.temp_video_dir / f"{self.output_guid}_lightweight.mp4"
         
         def progress_callback(percent: int, message: str) -> None:
-            """代理生成进度回调 (占 10-25%)"""
+            """轻量视频生成进度回调 (占 10-25%)"""
             actual_progress = 10 + int(percent * 0.15)
             update_task_progress(self.output_guid, actual_progress, message)
         
-        result = generate_proxy_video(
+        result = generate_lightweight_video(
             source_video=source_video,
-            output_path=proxy_path,
+            output_path=lightweight_path,
             crop_box=crop_bbox,
             target_width=640,
             target_fps=5,
@@ -403,23 +424,24 @@ class VideoService:
         
         return result
 
-    def _run_funnel_analysis(self, proxy_video: Path) -> list[float]:
+    def _run_funnel_analysis(self, lightweight_video: Path) -> list[float]:
         """
-        三层漏斗分析 (运行在代理视频上)
+        三层漏斗分析 (运行在轻量视频上)
         
-        在代理视频上执行 L1+L2+L3 分析，输出最终时间戳列表。
+        在轻量视频上执行 L1+L2+L3 分析，输出最终时间戳列表。
         
         处理流程:
             L1 (物理层): GPU 帧差检测 → 场景分割
             L2 (质量层): 拉普拉斯清晰度 → 选冠军帧
-            L3 (语义层): OCR 文本去重 → 过滤重复页
+            L3 (语义层): OCR 文本识别 → 过滤重复页 + 非PPT页面
         
         关键设计:
             - 所有逻辑基于时间戳 (秒 float)
-            - 使用代理视频进行 OCR (快速)
+            - 使用轻量视频进行 OCR (快速)
+            - 无文字内容的帧视为非 PPT 页面，自动过滤
         
         Args:
-            proxy_video: 代理视频路径 (640px, 5fps)
+            lightweight_video: 轻量视频路径 (640px, 5fps)
         
         Returns:
             list[float]: 最终时间戳列表，如 [1.2, 15.6, 48.2, ...]
@@ -427,7 +449,7 @@ class VideoService:
         logger.info("🔄 开始三层漏斗分析...")
         logger.info("   L1: GPU 帧差检测 → 场景分割")
         logger.info("   L2: 拉普拉斯清晰度 → 选冠军帧")
-        logger.info("   L3: OCR 文本去重 → 过滤重复页")
+        logger.info("   L3: OCR 识别 → 过滤重复页 + 非PPT页面")
         
         # 重置 OCR 去重器
         self.ocr_deduper.reset()
@@ -442,7 +464,7 @@ class VideoService:
             update_task_progress(self.output_guid, actual_progress, message)
         
         for best_shot in self.frame_processor.extract_best_shots(
-            proxy_video, 
+            lightweight_video, 
             progress_callback=l1l2_progress
         ):
             candidate_count += 1
@@ -451,16 +473,16 @@ class VideoService:
                         f"timestamp={best_shot.timestamp:.2f}s, "
                         f"清晰度={best_shot.sharpness_score:.4f}")
             
-            # ----- L3: OCR 语义去重 -----
+            # ----- L3: OCR 识别与过滤 -----
             update_task_progress(
                 self.output_guid, 
                 50 + int((candidate_count / max(candidate_count, 1)) * 20),
-                f"L3 OCR 去重: 第 {candidate_count} 个候选"
+                f"L3 OCR 分析: 第 {candidate_count} 个候选"
             )
             
-            # 从代理视频读取帧进行 OCR (代理视频足够进行文字识别)
+            # 从轻量视频读取帧进行 OCR (轻量视频足够进行文字识别)
             frame = self.frame_processor.get_frame_at_timestamp(
-                proxy_video, 
+                lightweight_video, 
                 best_shot.timestamp
             )
             
@@ -470,8 +492,14 @@ class VideoService:
             
             is_duplicate, text = self.ocr_deduper.is_duplicate(frame)
             
+            # 过滤条件 1: 无文字内容 → 非 PPT 页面
+            if not text or not text.strip():
+                logger.debug(f"   📄 @ {best_shot.timestamp:.2f}s 无文字内容，判定为非PPT页面，跳过")
+                continue
+            
+            # 过滤条件 2: 与已保存页面重复
             if is_duplicate:
-                logger.debug(f"   🔄 @ {best_shot.timestamp:.2f}s 被 OCR 去重丢弃")
+                logger.debug(f"   🔄 @ {best_shot.timestamp:.2f}s 与已保存页相似度过高，跳过")
                 continue
             
             # 保留该时间戳
