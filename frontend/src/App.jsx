@@ -27,6 +27,7 @@ function App() {
   const [progress, setProgress] = useState(0);     // 0-100 的进度值
   const [message, setMessage] = useState('');      // 当前处理阶段的文字描述
   const [downloadUrl, setDownloadUrl] = useState(''); // PPT 下载链接
+  const [transcriptUrl, setTranscriptUrl] = useState(''); // 发言稿下载链接
 
   // 使用 useRef 存储定时器 ID，以便在组件卸载或状态变更时清除
   const pollingRef = useRef(null);
@@ -93,6 +94,9 @@ function App() {
           if (data.result_url) {
             setDownloadUrl(getDownloadUrl(data.result_url));
           }
+          if (data.transcript_url) {
+            setTranscriptUrl(getDownloadUrl(data.transcript_url));
+          }
 
           setStatus('success');
         }
@@ -112,6 +116,7 @@ function App() {
     setProgress(0);
     setMessage('');
     setDownloadUrl('');
+    setTranscriptUrl('');
   };
 
   return (
@@ -213,7 +218,7 @@ function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 className="w-full"
               >
-                <SuccessCard onReset={handleReset} downloadUrl={downloadUrl} />
+                <SuccessCard onReset={handleReset} downloadUrl={downloadUrl} transcriptUrl={transcriptUrl} />
               </motion.div>
             )}
           </AnimatePresence>

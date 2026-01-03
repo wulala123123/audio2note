@@ -4,14 +4,15 @@
  * 核心逻辑:
  *    - 展示"转换完成"状态
  *    - 提供生成的 PPTX 下载链接
+ *    - 提供发言稿下载链接 (如启用音频转录)
  *    - 提供处理下一个视频的重置入口
  */
 import React from 'react';
 import { motion } from 'framer-motion';
-import { FileDown, Video, CheckCircle2, ArrowRight } from 'lucide-react';
+import { FileDown, FileText, CheckCircle2, ArrowRight } from 'lucide-react';
 import { clsx } from 'clsx';
 
-export const SuccessCard = ({ onReset, downloadUrl, videoUrl }) => {
+export const SuccessCard = ({ onReset, downloadUrl, transcriptUrl }) => {
     return (
         <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -32,7 +33,7 @@ export const SuccessCard = ({ onReset, downloadUrl, videoUrl }) => {
                         转换完成!
                     </h2>
                     <p className="text-slate-400 max-w-sm mx-auto">
-                        视频已成功处理，提取的关键幻灯片已打包。您可以下载演示文稿或裁剪后的视频。
+                        视频已成功处理。您可以下载提取的演示文稿和视频发言稿。
                     </p>
                 </div>
 
@@ -40,22 +41,34 @@ export const SuccessCard = ({ onReset, downloadUrl, videoUrl }) => {
                 <div className="flex flex-col sm:flex-row gap-4 justify-center relative z-10">
 
                     {/* PPT 下载按钮 (主要操作) */}
-                    <a
-                        href={downloadUrl}
-                        download
-                        className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-100 text-slate-950 font-medium rounded-xl hover:bg-white transition-all hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/10"
-                    >
-                        <FileDown className="w-5 h-5 group-hover:text-indigo-600 transition-colors" />
-                        <span>下载 PPTX</span>
-                    </a>
+                    {downloadUrl && (
+                        <a
+                            href={downloadUrl}
+                            download
+                            className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-100 text-slate-950 font-medium rounded-xl hover:bg-white transition-all hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/10"
+                        >
+                            <FileDown className="w-5 h-5 group-hover:text-indigo-600 transition-colors" />
+                            <span>下载 PPT</span>
+                        </a>
+                    )}
 
-                    {/* 视频下载按钮 (次要操作，目前主要起占位作用) */}
-                    {/* TODO: 绑定真实的裁剪视频下载链接 */}
-                    <button className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-800 text-slate-200 font-medium rounded-xl hover:bg-slate-700 transition-all hover:scale-105 active:scale-95 border border-slate-700">
-                        <Video className="w-5 h-5 group-hover:text-emerald-400 transition-colors" />
-                        <span>下载视频</span>
-                    </button>
+                    {/* 发言稿下载按钮 */}
+                    {transcriptUrl && (
+                        <a
+                            href={transcriptUrl}
+                            download
+                            className="group flex items-center justify-center gap-2 px-6 py-4 bg-slate-800 text-slate-200 font-medium rounded-xl hover:bg-slate-700 transition-all hover:scale-105 active:scale-95 border border-slate-700"
+                        >
+                            <FileText className="w-5 h-5 group-hover:text-emerald-400 transition-colors" />
+                            <span>下载发言稿</span>
+                        </a>
+                    )}
                 </div>
+
+                {/* 无结果提示 */}
+                {!downloadUrl && !transcriptUrl && (
+                    <p className="text-slate-500 relative z-10">未生成任何输出文件</p>
+                )}
 
                 {/* 重置按钮 */}
                 <button
