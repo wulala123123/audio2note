@@ -61,7 +61,21 @@ function App() {
 
     } catch (error) {
       console.error("Upload failed:", error);
-      alert("上传失败，请重试");
+
+      let errorMsg = "上传失败，请重试";
+      if (error.response) {
+        // 后端返回了错误响应 (如 413, 500)
+        errorMsg += `\n错误代码: ${error.response.status}`;
+        errorMsg += `\n错误信息: ${error.response.data?.detail || error.response.statusText}`;
+      } else if (error.request) {
+        // 请求已发出但无响应 (如网络断开)
+        errorMsg += "\n网络错误: 无法连接到服务器";
+      } else {
+        // 其他错误
+        errorMsg += `\n详细信息: ${error.message}`;
+      }
+
+      alert(errorMsg);
       setStatus('idle');
     }
   };

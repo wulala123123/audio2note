@@ -13,9 +13,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from starlette.responses import FileResponse # Moved import to top
 
 from app.api.v1.endpoints import router as api_router
-from app.core.config import OUTPUT_DIR
+from app.core.config import OUTPUT_DIR, BASE_DIR
 from app.services.audio_service import init_audio_service
 
 
@@ -148,7 +149,12 @@ app = FastAPI(
 #   - 生产环境应修改为具体的前端域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://note.wulala.dpdns.org",
+        "https://noteapi.wulala.dpdns.org",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -163,10 +169,10 @@ app.include_router(api_router, prefix="/api/v1")
 app.mount("/static", StaticFiles(directory=OUTPUT_DIR), name="static")
 
 
-@app.get("/")
-async def root():
+@app.get("/health")
+async def health_check():
     """
-    根路径健康检查端点
+    健康检查端点 (Moved from root to /health to allow SPA serving)
     
     Returns:
         dict: 服务状态信息
@@ -176,3 +182,33 @@ async def root():
         "status": "running",
         "version": "2.0.0"
     }
+
+
+# ============================================================
+#               前端静态资源托管 (Production)
+# ============================================================
+# 定位前端构建目录
+# config.py 中的 BASE_DIR 是 backend 目录
+# 所以 frontend 在 BASE_DIR 的同级目录
+FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
+
+if FRONTEND_DIST.exists():
+    logger.info(f"📂 发现前端构建目录: {FRONTEND_DIST}")
+    
+    # 1. 挂载静态资源 (assets, images 等)
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    
+    # 2. SPA 回退路由: 任何未匹配的路径都返回 index.html
+    # IMPORTANT: This must be the LAST defined route to act as a fallback
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # 检查是否请求了 favicon.ico 或 manifest.json 等根目录文件
+        file_path = FRONTEND_DIST / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+            
+        # 默认返回 index.html (SPA 路由支持)
+        return FileResponse(FRONTEND_DIST / "index.html")
+else:
+    logger.warning(f"⚠️ 未找到前端构建目录: {FRONTEND_DIST}")
+    logger.warning("   如需前后端同源部署，请先运行 'npm run build'")

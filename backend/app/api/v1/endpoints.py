@@ -146,7 +146,7 @@ async def upload_video(
     
     Example:
         >>> curl -X POST -F "file=@lecture.mp4" -F "enable_ppt_extraction=true" \\
-        ...      http://localhost:8000/api/v1/tasks/upload
+        ...      http://127.0.0.1:8000/api/v1/tasks/upload
         {"task_id": "xxx-xxx", "status": "processing", "message": "任务已提交"}
     """
     logger.info("=" * 60)

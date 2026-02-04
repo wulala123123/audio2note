@@ -97,19 +97,15 @@ class AudioTranscriber:
             model_config = {
                 # 主 ASR 模型: SeACo-Paraformer (16kHz 中文)
                 "model": "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-                "model_revision": "v2.0.4",
                 
                 # VAD 模型: 语音活动检测 (识别静音片段)
                 "vad_model": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-                "vad_model_revision": "v2.0.4",
                 
                 # 标点恢复模型: 自动添加标点符号
                 "punc_model": "iic/punc_ct-transformer_cn-en-common-vocab471067-large",
-                "punc_model_revision": "v2.0.4",
                 
                 # 说话人分离模型 (可选，用于多人对话场景)
                 "spk_model": "iic/speech_campplus_sv_zh-cn_16k-common",
-                "spk_model_revision": "v2.0.2",
             }
             
             # 加载模型到 GPU

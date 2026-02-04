@@ -8,15 +8,19 @@
  */
 import axios from 'axios';
 
-// 后端服务地址
-// 注意: 前端开发服通常在 5173，后端在 8000
-// 如遇跨域问题，请确保后端已配置 CORS 允许 localhost:5173
-const BASE_URL = 'http://127.0.0.1:8000';
+
+// 自动判断逻辑：
+// 1. 开发环境 (localhost:5173) -> 依然指向 localhost:8000
+// 2. 生产环境 (同源部署) -> 指向当前域名 (相对路径)
+const BASE_URL = import.meta.env.DEV
+    ? 'http://127.0.0.1:8000'
+    : ''; // 生产环境使用相对路径，自动适配当前域名
+
 
 // 创建 axios 实例
 const api = axios.create({
     baseURL: BASE_URL,
-    // 超时设置为 30 秒 (防止上传大文件时过早断开)
+    // 超时设置为 30 秒 (防止上传大文件时过早断开) 
     timeout: 30000,
 });
 
@@ -77,6 +81,9 @@ export const checkStatus = async (taskId) => {
  * 
  * Args:
  *     path (string): 相对路径 (如 /static/xxx.pptx) 或 完整 URL
+ * 
+ * Returns:
+ *     string: 可直接访问的完整 URL
  * 
  * Returns:
  *     string: 可直接访问的完整 URL
