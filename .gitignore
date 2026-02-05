@@ -3,6 +3,7 @@
 Thumbs.db
 EHthumbs.db
 .antigravityrules
+CLAUDE.md
 
 # Python / Backend
 __pycache__/
@@ -31,6 +32,8 @@ frontend/.env.local
 # IDE
 .idea/
 .vscode/
+.claude/
+*.code-workspace
 *.swp
 *.swo
 
