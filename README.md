@@ -7,7 +7,7 @@
 [![TailwindCSS](https://img.shields.io/badge/Style-TailwindCSS-06B6D4.svg?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![PyTorch](https://img.shields.io/badge/AI-PyTorch_CUDA-EE4C2C.svg?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 
-上传课程录屏、会议视频或演讲视频，AI 自动分析关键帧，提取清晰幻灯片，并生成可编辑的 PPTX 文件。
+上传课程录屏、会议视频或演讲视频，AI 自动分析关键帧，提取清晰幻灯片、发言内容，并生成可编辑的 PPTX 文件。
 
 ---
 

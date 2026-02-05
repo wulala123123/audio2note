@@ -76,7 +76,7 @@ class AudioTranscriber:
     def _load_model(self) -> None:
         """
         初始化加载 FunASR 模型
-        
+
         Warning:
             这是一个耗时操作 (10-30秒)，且会占用 GPU 显存 (2-4GB)。
             首次运行会自动从 ModelScope 下载模型权重 (约 1-2GB)。
@@ -87,37 +87,49 @@ class AudioTranscriber:
 
         logger.info("=" * 50)
         logger.info("📦 正在加载 FunASR 模型...")
-        logger.info("   ⚠️ 首次运行会自动下载权重 (约 1-2GB)")
-        logger.info("=" * 50)
-        
+
         try:
+            # 辅助函数：优先使用本地缓存路径，避免联网检查卡顿
+            def get_model_path(model_id):
+                # 用户报告的路径结构: ~/.cache/modelscope/hub/models/iic/...
+                home = Path.home()
+                possible_paths = [
+                    home / ".cache" / "modelscope" / "hub" / "models" / model_id, # 用户特定环境
+                    home / ".cache" / "modelscope" / "hub" / model_id,            # 标准环境
+                ]
+
+                for p in possible_paths:
+                    if p.exists():
+                        logger.info(f"   🔍 命中本地缓存: {p}")
+                        return str(p)
+
+                # 未找到本地缓存，使用 ID 尝试下载
+                logger.info(f"   ⬇️ 未找到本地缓存，准备下载: {model_id}")
+                return model_id
+
             # ----- FunASR 模型配置 -----
             # 模型来源: ModelScope (阿里达摩院)
-            # 模型能力: 中文语音识别 + VAD + 标点恢复 + 说话人分离
+            # 优化: 尝试解析为本地绝对路径
             model_config = {
-                # 主 ASR 模型: SeACo-Paraformer (16kHz 中文)
-                "model": "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-                
-                # VAD 模型: 语音活动检测 (识别静音片段)
-                "vad_model": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-                
-                # 标点恢复模型: 自动添加标点符号
-                "punc_model": "iic/punc_ct-transformer_cn-en-common-vocab471067-large",
-                
-                # 说话人分离模型 (可选，用于多人对话场景)
-                "spk_model": "iic/speech_campplus_sv_zh-cn_16k-common",
+                "model": get_model_path("iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"),
+                "vad_model": get_model_path("iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"),
+                "punc_model": get_model_path("iic/punc_ct-transformer_cn-en-common-vocab471067-large"),
+                "spk_model": get_model_path("iic/speech_campplus_sv_zh-cn_16k-common"),
             }
-            
+
+            logger.info("   🚀 开始加载模型到 GPU (请耐心等待)...")
+
             # 加载模型到 GPU
             # disable_update=True: 禁用模型自动更新检查，加快启动速度
             AudioTranscriber._model = AutoModel(
-                **model_config, 
+                **model_config,
                 device="cuda",
-                disable_update=True
+                disable_update=True,
+                log_level="ERROR" # 减少底层库的刷屏日志
             )
-            
+
             logger.success("✅ FunASR 模型加载成功 (CUDA)")
-            
+
         except Exception as e:
             logger.exception(f"❌ 模型加载失败: {e}")
             raise RuntimeError(f"无法加载音频模型: {e}")
